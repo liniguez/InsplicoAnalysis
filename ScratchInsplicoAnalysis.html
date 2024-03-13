@@ -120,7 +120,7 @@ pre > code.sourceCode > span > a:first-child::before { text-decoration: underlin
 </div>
 <section id="material" class="level2" data-number="1">
 <h2 data-number="1" class="anchored" data-anchor-id="material"><span class="header-section-number">1</span> Material</h2>
-<p>Insplico uses a tab delimited file where all exons are listed and which are going to be quantified. Here you can get a subset of one used to run insplico. Insplico is ran for each sample individually and then the output of all the runs can be merged into a single big data. Here you can get a subset of a run. Here I analyzed two single cell libraries NB292 and NB293. I got the clustering of the cells based on gene expression. Alignment file was then splitted per sample into different clusters, based on cell barcodes and used as input for Insplico.</p>
+<p>Insplico uses a tab delimited file where all exons are listed and which are going to be quantified. <a href="https://raw.githubusercontent.com/liniguez/InsplicoAnalysis/main/exons_subset_insplico.tab">Here</a> you can get a subset of one used to run insplico. Insplico is ran for each sample individually and then the output of all the runs can be merged into a single big data. <a href="https://raw.githubusercontent.com/liniguez/InsplicoAnalysis/main/subset_final_insplico.tab">Here</a> you can get a subset of a run. Here I analyzed two single cell libraries NB292 and NB293. I got the clustering of the cells based on gene expression. Alignment file was then splitted per sample into different clusters, based on cell barcodes and used as input for Insplico.</p>
 <div class="callout callout-style-default callout-note callout-titled">
 <div class="callout-header d-flex align-content-center">
 <div class="callout-icon-container">
@@ -235,7 +235,7 @@ Note
 </section>
 <section id="no-replicates" class="level2" data-number="4">
 <h2 data-number="4" class="anchored" data-anchor-id="no-replicates"><span class="header-section-number">4</span> No Replicates</h2>
-<p>Lets work only with the PSI values from cluster 1. The question is whether exons are differentially spliced between the two samples of cluster 1. In this case we have only two samples, and we will compare both. For this part I used similar methods as the ones reported in the paper of <a href="https://rnajournal.cshlp.org/content/early/2024/01/26/rna.079764.123">betAS</a>. This methods are still under discussion and comments for improvement are more than welcome.</p>
+<p>Lets work only with the PSI values from cluster 1. The question is whether exons are differentially spliced between the two samples of cluster 1. In this case we have only two samples, and we will compare both. For this part I used similar methods as the ones reported in the paper of <a href="https://rnajournal.cshlp.org/content/early/2024/01/26/rna.079764.123">betAS</a>. This methods are still under discussion and comments for improvement are more than welcome. The needed table can be found in <a href="https://raw.githubusercontent.com/liniguez/InsplicoAnalysis/main/table_betAS.txt">here</a>.</p>
 <div class="cell" data-hash="ScratchInsplicoAnalysis_cache/html/unnamed-chunk-8_38a897446facaedaecd7b9957398469a">
 <details open="">
 <summary>Code</summary>
