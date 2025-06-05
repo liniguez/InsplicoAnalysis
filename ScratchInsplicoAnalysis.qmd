@@ -29,7 +29,7 @@ library(see)
 
 ## Material
 
-Insplico uses a tab delimited file where all exons are listed and which are going to be quantified. [Here](https://raw.githubusercontent.com/liniguez/InsplicoAnalysis/main/exons_subset_insplico.tab) you can get a subset of one used to run insplico. Insplico is ran for each sample individually and then the output of all the runs can be merged into a single big data. [Here](https://raw.githubusercontent.com/liniguez/InsplicoAnalysis/main/subset_final_insplico.tab) you can get a subset of a run. Here I analyzed two single cell libraries NB292 and NB293. I got the clustering of the cells based on gene expression. Alignment file was then splitted per sample into different clusters, based on cell barcodes and used as input for Insplico.
+Insplico uses a tab delimited file where all exons are listed and which are going to be quantified. [Here](https://raw.githubusercontent.com/liniguez/InsplicoAnalysis/main/exons_subset_insplico.tab) you can get a subset of one used to run insplico. Insplico is ran for each sample individually and then the output of all the runs can be **merged** into a single big data. [Here](https://raw.githubusercontent.com/liniguez/InsplicoAnalysis/main/subset_final_insplico.tab) you can get a subset of a run. Here I analyzed two single cell libraries NB292 and NB293. I got the clustering of the cells based on gene expression. Alignment file was then split per sample into different clusters, based on cell barcodes and used as input for Insplico.
 
 ::: callout-note
 It is important to mention that each row form Insplico output correspond to each row from tab delimited exon file. More info about insplico in [here](https://gitlab.com/aghr/insplico)
@@ -50,7 +50,7 @@ exons<-insp %>% select(UPINT_MINLEN,DOWNINT_MINLEN,INTLEN_CONSIDERED,EX_MINLEN,E
   cbind(exons)
 ```
 
-For DAS analysis we will only use 4 columns:
+For differential splicing analysis (DSA) we will only use 4 columns:
 
 -   PSI_EX
 
@@ -103,33 +103,72 @@ for short reads it would be something like:
 
 > EXON_INCLSPLICED_2UPSTRM +EXON_INCLSPLICED_2DOSTRM + EXON_EXCL
 
+Here we are using the mentioned values for assigning a quality score to each PSI based on vast-tools quality parameters ([more info](https://github.com/vastgroup/vast-tools)).
+
 ```{r}
+
+covScore <- function(total_reads, exon_excl, exon_inclspliced_2upstrm, exon_inclspliced_2dostrm){
+  case_when(
+    total_reads >= 100 & (exon_excl >= 20 | ( (exon_inclspliced_2upstrm >= 20 & exon_inclspliced_2dostrm >= 15) | (exon_inclspliced_2upstrm >= 15 & exon_inclspliced_2dostrm >= 20) )) ~ "SOK",
+    total_reads < 100 & (exon_excl >= 20 | ( (exon_inclspliced_2upstrm >= 20 & exon_inclspliced_2dostrm >= 15) | (exon_inclspliced_2upstrm >= 15 & exon_inclspliced_2dostrm >= 20) )) ~ "OK",
+    exon_excl >= 15 | ( (exon_inclspliced_2upstrm >= 15 & exon_inclspliced_2dostrm >= 10) | (exon_inclspliced_2upstrm >= 10 & exon_inclspliced_2dostrm >= 15) ) ~ "LOW",
+    exon_excl >= 10 | ( (exon_inclspliced_2upstrm >= 10 & exon_inclspliced_2dostrm >= 5) | (exon_inclspliced_2upstrm >= 5 & exon_inclspliced_2dostrm >= 10) ) ~ "VLOW",
+    TRUE ~ "N"
+  )
+}
+
 rawinsp<-insp %>% filter(!is.na(feature)) %>%
   pivot_wider(id_cols = c(sample,sample.cluster,cluster,ROW),names_from = "feature", values_from = "values") %>% 
-  mutate(r_sup=(EXON_INCLSPLICED_2UPSTRM+EXON_INCLSPLICED_2DOSTRM)/2+EXON_EXCL)
+  mutate(
+    PSI = round(100 * PSI_EX, 2),
+    TOT_READS = EXON_INCLSPLICED_2UPSTRM + EXON_INCLSPLICED_2DOSTRM + EXON_EXCL,
+    INC = round(TOT_READS * PSI_EX, 1),
+    EXC = round(TOT_READS * (1 - PSI_EX), 1),
+    COV = covScore(total_reads=TOT_READS, 
+                   exon_excl=EXON_EXCL, 
+                   exon_inclspliced_2upstrm=EXON_INCLSPLICED_2UPSTRM, 
+                   exon_inclspliced_2dostrm=EXON_INCLSPLICED_2DOSTRM),
+    Q = paste0(COV, ",", 
+               TOT_READS, ",", 
+               EXON_INCLSPLICED_2UPSTRM, ",", 
+               EXON_INCLSPLICED_2DOSTRM, ",", 
+               EXON_EXCL, "@", 
+               INC, ",", 
+               EXC)
+  )  %>% dplyr::select(sample,sample.cluster,cluster,ROW,ROW, PSI, Q)
 
 ```
 
-Usually for DAS analysis exons with less than 15 reads are ignored.
+Usually for DSA exons with Quality of *N* are ignored.
 
 Additionally, constitutive exons (PSI \> 90) and cryptic ones ( PSI \<10) are also removed.
 
-Here we have only two samples one per group, but more complex filters can be adjusted.
+Here we have only two samples one per group, but more complex filters can be applied (this one is very basic, latter other filters are shown).
 
-```{r}
-psiFilt<-rawinsp %>%
-  mutate(PSI_fil=ifelse(r_sup<15,NA,PSI_EX)) %>%
-  filter(!is.na(PSI_fil)) %>%
-  pivot_wider(id_cols = c(cluster,ROW),
-              names_from = "sample",values_from = "PSI_fil") %>%   
-  mutate(prop_const=apply(select(.,-c(cluster,ROW)),1,function(x){sum(x>0.9)/length(x)}),
-         prop_cryp=apply(select(.,-c(cluster,ROW)),1,function(x){sum(x<0.1)/length(x)}))%>%
-  filter(!is.na(prop_const) & prop_const<=0.5 & prop_cryp<=0.5)
-```
 
 ## No Replicates
 
-Lets work only with the PSI values from cluster 1. The question is whether exons are differentially spliced between the two samples of cluster 1. In this case we have only two samples, and we will compare both. For this part I used similar methods as the ones reported in the paper of [betAS](https://rnajournal.cshlp.org/content/early/2024/01/26/rna.079764.123). This methods are still under discussion and comments for improvement are more than welcome. The needed table can be found in [here](https://raw.githubusercontent.com/liniguez/InsplicoAnalysis/main/table_betAS.txt).
+Lets work only with the PSI values from cluster 1. The question is whether exons are differentially spliced between the two samples of cluster 1. In this case we have only two samples, and we will compare both. First let's filter the cryptic and constitutuve events.
+
+
+```{r}
+psiFilt<-rawinsp %>% filter(cluster==1)%>%
+  mutate(PSI_fil=ifelse(grepl("^N",Q,perl=T),NA,PSI)) %>%
+  filter(!is.na(PSI_fil))%>%
+  pivot_wider(id_cols = c(ROW),
+              names_from = "sample",values_from = "PSI_fil",values_fill = NA)
+psiFilt_noCryp_noConst<-psiFilt%>%   
+  mutate(prop_const=apply(select(.,-c(ROW)),1,function(x){sum(x>90)/length(x)}),
+         prop_cryp=apply(select(.,-c(ROW)),1,function(x){sum(x<10)/length(x)}))%>%
+  filter(!is.na(prop_const) & prop_const<=0.5 & prop_cryp<=0.5)
+```
+This is how the events to be analyzed look like:
+
+```{r, fig.width=4, fig.height=4}
+psiFilt_noCryp_noConst %>% ggplot(aes(x=NB292, y=NB293))+geom_point(size=0.5)+theme_bw()
+```
+
+For this part I used similar methods as the ones reported in the paper of [betAS](https://rnajournal.cshlp.org/content/early/2024/01/26/rna.079764.123). This methods are still under discussion and comments for improvement are more than welcome. The needed table can be found in [here](https://raw.githubusercontent.com/liniguez/InsplicoAnalysis/main/table_betAS.txt).
 
 ```{r}
 betasmat<-read.table("table_betAS.txt") #This table is provided by the betAS package.
@@ -162,16 +201,27 @@ getpseudop<-function(inc1,excl1,inc2,excl2, seed=12032024){
 We need again the number of reads per sample that support inclusion/exclusion of the exon. We'll need to modify a bit betAS pipeline. Pseudo-pvalue will be adjusted with fdr.
 
 ```{r}
-resSimBeta_temp<-rawinsp %>% 
-  right_join(psiFilt, by=c("ROW","cluster")) %>% filter(cluster==1) %>% 
-  mutate(INC=(EXON_INCLSPLICED_2DOSTRM+EXON_INCLSPLICED_2UPSTRM)/2, #Here is set for long reads, but for short reads should be EXON_INCLSPLICED_2DOSTRM + EXON_INCLSPLICED_2UPSTRM and
-         EXCL=EXON_EXCL) %>% # EXON_EXCL*2
-  rowwise() %>%
-  mutate(INC=ifelse(INC==0,givenCovfindIncr(round(EXCL),betasmat),INC))%>%
-  mutate(EXCL=ifelse(EXCL==0,givenCovfindIncr(round(INC),betasmat),EXCL)) %>%
+getINC<-function(x){
+  y<-gsub(pattern="@",replacement = ",",x) %>% strsplit(split=",") %>% unlist()
+  inc<-as.numeric(y[3])+as.numeric(y[4])
+  return(inc)
+}
+getEXC<-function(x){
+  y<-gsub(pattern="@",replacement = ",",x) %>% strsplit(split=",") %>% unlist()
+  exc<-as.numeric(y[5])
+  return(exc)
+}
+
+resSimBeta_temp<-rawinsp %>% filter(cluster==1 & ROW %in% psiFilt_noCryp_noConst$ROW)%>%
+  rowwise()%>%
+  mutate(INC=getINC(Q),
+         EXCL=getEXC(Q)*2,  # EXON_EXCL*2
+         INC=ifelse(INC==0,givenCovfindIncr(round(EXCL),betasmat),INC),
+         EXCL=ifelse(EXCL==0,givenCovfindIncr(round(INC),betasmat),EXCL)) %>%
   ungroup() %>%
   select(ROW,sample,cluster,INC,EXCL) %>%
   pivot_wider(id_cols = c("ROW","cluster"),names_from = "sample",values_from = c("INC","EXCL"))
+
 resBETAS<-sapply(1:length(resSimBeta_temp$ROW),function(x){
   res<-getpseudop(inc1=as.numeric(resSimBeta_temp[x,"INC_NB292"]),
                   excl1=as.numeric(resSimBeta_temp[x,"EXCL_NB292"]),
@@ -187,15 +237,18 @@ resSimBeta<-resSimBeta_temp %>% group_by(cluster) %>% mutate(sudopadj= p.adjust(
 This is the filtered result:
 
 ```{r}
-exons_results<-psiFilt %>% mutate(dPSI=NB293-NB292) %>% left_join(resSimBeta, by=c("ROW","cluster")) %>%
-  mutate(DiffSP=ifelse(sudopadj<0.1 & abs(dPSI)>0.15,"DS","ns"),DiffSP=factor(DiffSP,levels=c("ns","DS")) ) 
+exons_results<-psiFilt_noCryp_noConst %>% mutate(dPSI=NB293-NB292) %>%
+  left_join(resSimBeta, by=c("ROW")) %>%
+  mutate(DiffSP=ifelse(sudopadj<0.1 & abs(dPSI)>15,"DS","ns"),DiffSP=factor(DiffSP,levels=c("ns","DS")) ) 
 
-exons_results %>% filter(DiffSP=="DS") %>% left_join(exons, by="ROW") %>% data.table()
+exons_results %>% filter(DiffSP=="DS") %>% left_join(exons, by="ROW") %>% arrange(sudopadj) %>% data.table()
 
 ```
 
-```{r}
-data4plot<-exons_results %>% filter(DiffSP=="DS") %>% left_join(exons, by="ROW") %>% apply(1,function(x){
+```{r, fig.height=4,fig.width=6}
+data4plot<-exons_results %>% filter(DiffSP=="DS") %>% left_join(exons, by="ROW") %>%
+  arrange(sudopadj)%>%
+  apply(1,function(x){
   nsim<-1000
   inc1<-as.numeric(x[8])
   excl1<-as.numeric(x[10])
@@ -204,15 +257,21 @@ data4plot<-exons_results %>% filter(DiffSP=="DS") %>% left_join(exons, by="ROW")
   r1<-rbeta(nsim,inc1,excl1)
   r2<-rbeta(nsim,inc2,excl2)
   tibble("a"=r1, "b"=r2) %>%
-    mutate(EXON_ID=x[34], GENE=x[28], C1=x[20],STARTS=x[21],ENDS=x[22],C2=x[23] )
+    mutate(ROW=x[1],EXON_ID=x[29], GENE=x[23], C1=x[15],STARTS=x[16],ENDS=x[17],C2=x[18] )
 }) %>% do.call(rbind,.)
-data4plot %>%mutate(GENE=toupper(GENE))%>%
-  ggplot(aes(x=interaction(GENE,EXON_ID)))+
-  see::geom_violinhalf(aes(y=b, fill="b"), color="gray30",trim = F)+
-  see::geom_violinhalf(aes(y=a, fill="a"),flip=TRUE, color="gray30",trim=F)+
-  theme_bw()+
+data4plot %>%
+  mutate(GENE=toupper(GENE)) %>%
+  rowwise() %>% 
+  mutate(GENEEXON=paste0(GENE,".",EXON_ID))%>%
+  ungroup()%>%
+  mutate(GENEEXON=forcats::fct_inorder(GENEEXON))%>%
+  ggplot(aes(x=GENEEXON))+
+  see::geom_violinhalf(aes(y=b, fill="b"), color="gray30",trim = T,scale="width")+
+  see::geom_violinhalf(aes(y=a, fill="a"),flip=TRUE, color="gray30",trim=T,scale="width")+
+  theme_bw(10)+
   scale_fill_manual(values=c("b"="orange","a"="royalblue"), name="Samples")+
-  labs(y="PSI", x="Gene.ExonID")
+  labs(y="simulated PSI", x="Gene.ExonID")+
+  theme(axis.text.x = element_text(angle = 30,hjust = 1))
 ```
 
 ## With Replicates
@@ -220,86 +279,101 @@ data4plot %>%mutate(GENE=toupper(GENE))%>%
 Now lets assume we have replicates and the different clusters are replicates of the sample. Here again we need to filter constitutive and cryptic exons. First, we'll check what is the proportion of clusters from each sample where the number of reads supporting the inclusion/exclusion is greater than 15, and filter if the proportion is greater than 30%. This is too lax, but it is because of the toy data used, usually this proportion should be above 50%.
 
 ```{r}
-insp_mod<-rawinsp %>%
-  mutate(PSI_fil=ifelse(r_sup<15,NA,PSI_EX)) %>%
+insp_noN<-rawinsp %>% 
+  mutate(PSI_fil=ifelse(grepl("^N",Q,perl=T),NA,PSI)) %>%
   filter(!is.na(PSI_fil))
 
 nsamples_pergroup<-rawinsp  %>% select(sample,sample.cluster) %>% unique() %>% group_by(sample) %>% reframe(N_tot=n())
 
-numEvpergr<-insp_mod %>% 
-  group_by(ROW,sample) %>% reframe(N=n()) %>%
-  left_join(nsamples_pergroup, by="sample") %>% mutate(Prop=N/N_tot) 
+summaryEvpergr<-insp_noN %>%
+  group_by(sample,ROW) %>% reframe(N=n(), meanPSI=mean(PSI),
+                                      sdPSI=sd(PSI), minPSI=min(PSI), maxPSI=max(PSI),
+                                      medianPSI=median(PSI)) %>%
+  left_join(nsamples_pergroup, by="sample") %>% mutate(Prop=N/N_tot)
 
-evin2check<- numEvpergr %>% filter(Prop>0.30) %>% group_by(ROW) %>% reframe(okgrps=n()) %>% filter(okgrps>1)
+#Check for events in at least 30% of the samples in here in more than 4 clusters
+
+evin2check<- summaryEvpergr %>% 
+    filter(Prop>0.3) %>% group_by(ROW) %>% reframe(okgrps=n()) %>% filter(okgrps>1)
+tempSum<-summaryEvpergr %>%  filter(ROW %in% unique(evin2check$ROW)) 
+
+
 ```
 
 We then check what is the proportion of clusters in each sample where an exon is consitituve or cryptic. We filtered out exons where in more than 75% it showed a pattern of constitiuve or cryptic in both samples.
 
 ```{r}
 
-
-EvNOTCons<-insp_mod %>%
-  filter(PSI_EX >0.9 ) %>% 
-  group_by(ROW,sample) %>% reframe(N_c=n()) %>% 
-  full_join(numEvpergr, by=c("ROW","sample")) %>%
-  mutate(N_c=ifelse(is.na(N_c),0,N_c),
-         Prop_cons=N_c/N) %>% 
-  filter(Prop_cons <0.75) %>% group_by(ROW) %>% reframe(okgrps=n()) %>%
-  filter(okgrps>=1) %>% filter(ROW %in%evin2check$ROW )
-EvNOTConsNOTCry<-insp_mod %>%
-  filter(PSI_EX <0.1 ) %>% 
-  group_by(ROW,sample) %>% reframe(N_c=n()) %>% 
-  full_join(numEvpergr, by=c("ROW","sample")) %>%
-  mutate(N_c=ifelse(is.na(N_c),0,N_c),
-         Prop_cons=N_c/N) %>% 
-  filter(Prop_cons <0.75) %>% group_by(ROW) %>% reframe(okgrps=n()) %>%
-  filter(okgrps>=1) %>% filter(ROW %in%evin2check$ROW )
-
-evin2check<-evin2check %>% filter(ROW %in% EvNOTCons$ROW & ROW %in% EvNOTConsNOTCry$ROW )
-
+EvNOTCons<-insp_noN %>% 
+    filter( ROW %in% unique(evin2check$ROW)) %>%
+    filter(PSI >90 ) %>% 
+    group_by(ROW,sample) %>% reframe(N_c=n()) %>% full_join(tempSum, by=c("ROW","sample")) %>% 
+    mutate(N_c=ifelse(is.na(N_c),0,N_c),
+           Prop_cons=N_c/N) %>% 
+    pivot_wider(id_cols = ROW,names_from = sample,values_from = Prop_cons,values_fill = 0) %>%
+    rename(all_of(c(Test="NB292",Ref="NB293")))  %>% filter(Test < 0.5 | Ref < 0.5)
+  
+EvNOTCry<-insp_noN %>% 
+    filter( ROW %in% unique(evin2check$ROW)) %>%
+    filter(PSI <10 ) %>% 
+    group_by(ROW,sample) %>% reframe(N_c=n()) %>% full_join(tempSum, by=c("ROW","sample")) %>% 
+    mutate(N_c=ifelse(is.na(N_c),0,N_c),
+           Prop_cons=N_c/N) %>% 
+    pivot_wider(id_cols = ROW,names_from = sample,values_from = Prop_cons,values_fill = 0) %>%
+    rename(all_of(c(Test="NB292",Ref="NB293")))  %>% filter(Test < 0.5 | Ref < 0.5)
+  
+evin2check<-EvNOTCons  %>%
+    full_join(EvNOTCry, by=c("ROW"), suffix = c("_constitutive","_cryptic")) %>%
+    filter((!is.na(Ref_cryptic) & !is.na(Test_cryptic))&
+             (!is.na(Ref_constitutive)& !is.na(Test_constitutive)))%>%
+    select(ROW) %>% unique() 
 ```
 
-For assesing DAS with replicates I used beta regression on the samples and p-values were adjusted with fdr
+For assesing DSA with replicates I used beta regression on the samples and p-values were adjusted with fdr
 
 ```{r}
 ref="NB292"
 test="NB293"
-Rep_res<-insp_mod %>%
-  filter(ROW %in% evin2check$ROW ) %>%
-  split(.$ROW) %>%
-  lapply(function(x){
-    ROW=x$ROW %>% unique()
-    temp<-x%>%
-      mutate(GROUP=factor(sample,levels=c(ref,test))) %>%
-      filter(!is.na(GROUP))
-    pvalor<-temp %>% mutate(PSI_EX=ifelse(PSI_EX==0,0.0001,
-                                       ifelse(PSI_EX==1,0.9999,PSI_EX))) %>%
-      betareg(PSI_EX ~GROUP|1,data = .) %>% summary() %>%
-      .$coefficients %>% .$mean
-    pvalor<-pvalor[paste0("GROUP",test),'Pr(>|z|)']
-    means<-temp %>% group_by(GROUP) %>% reframe(M=mean(PSI_EX))
-    ref_means<-means %>% filter(GROUP==ref)
-    test_means<-means  %>% filter(GROUP!=ref)
-    dPSI<-test_means %>%
-      mutate(dpsi=M-ref_means$M, name=paste0("GROUP",GROUP)) %>%
-      select(name,dpsi)
-    result_out<-tibble("ROW"=ROW,test_PSI=test_means$M,
-                       ref_PSI=ref_means$M, "dPSI"=dPSI$dpsi,"pvalue"=pvalor)
-    return(result_out)
-  }) %>% do.call(rbind,.)
+Rep_res<-insp_noN %>% select(ROW,sample, PSI) %>%
+    right_join(evin2check, by=c("ROW")) %>% 
+    filter(sample %in% c(ref,test)) %>%
+    split(.$ROW) %>%
+    lapply(function(x){
+      evrow=x$ROW %>% unique()
+      temp<-x%>%
+        mutate(TestFactor=factor(sample,levels=c(ref,test))) %>%
+        filter(!is.na(TestFactor))
+      if(length(unique(temp$TestFactor))>1){
+        pvalor<-temp %>%
+          mutate(PSI_EX=PSI/100,PSI_EX=ifelse(PSI_EX==0,0.01,
+                                              ifelse(PSI_EX==1,0.99,PSI_EX))) %>%
+          betareg(PSI_EX ~TestFactor|1,data = .) %>% summary() %>%
+          .$coefficients %>% .$mean
+        pvalor<-pvalor[paste0("TestFactor",test),'Pr(>|z|)']
+      }else{pvalor <-1}
+      means<-temp %>% group_by(TestFactor) %>% reframe(M=mean(PSI))
+      ref_means<-means %>% filter(TestFactor==ref)
+      test_means<-means  %>% filter(TestFactor!=ref)
+      dPSI<-test_means %>%
+        mutate(dpsi=M-ref_means$M, name=paste0("TestFactor",TestFactor)) %>%
+        select(name,dpsi)
+      result_out<-tibble("ROW"=unique(x$ROW),test_PSI=test_means$M,
+                         ref_PSI=ref_means$M, "dPSI"=dPSI$dpsi,"pvalue"=pvalor)
+      return(result_out)
+    }) %>% do.call(rbind,.)
 Rep_res$padj<-p.adjust(Rep_res$pvalue, method = "fdr")
 
-subset(Rep_res,padj<0.1 & abs(dPSI)>0.15) %>% data.table()
+subset(Rep_res,padj<0.1 & abs(dPSI)>15) %>% data.table()
 ```
 
 ```{r}
-data2plot<- insp_mod %>% filter(ROW %in% subset(Rep_res,padj<0.1 & abs(dPSI)>0.15)$ROW)
+data2plot<- insp_noN %>% filter(ROW %in% subset(Rep_res,padj<0.1 & abs(dPSI)>15)$ROW)
 
 data2plot %>% left_join(exons, by="ROW") %>% rowwise() %>% mutate(NAME=paste0(toupper(GNAME),".",EXON_ID)) %>%  
-ggplot(aes(x=sample, y=PSI_EX))+
+ggplot(aes(x=sample, y=PSI))+
   geom_boxplot(outlier.shape = NA)+
   geom_point(aes(color=as.factor(cluster)), position = position_dodge(width=0.5))+
-  ylim(c(0,1))+
+  ylim(c(0,100))+
   facet_wrap(~NAME)+
   labs(y="PSI")+
   theme_bw()+
